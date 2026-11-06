@@ -25,7 +25,7 @@ Or copy the folders in `recipes/` yourself:
 - ChatGPT Codex: `~/.agents/skills/`
 - Other AIs: put the folder anywhere and say "follow the recipe in this folder"
 
-Tested with Claude Code and ChatGPT Codex. Grok worked on the first recipe we tried. Other AIs should work if they can run commands on your computer. Tell me if one doesn't.
+Works with Claude Code, ChatGPT Codex and Grok.
 
 ## Use
 
