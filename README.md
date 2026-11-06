@@ -1,6 +1,6 @@
 # Naomi's Editing Cookbook
 
-Tasteful edits for creators. Five free editing recipes for Claude Code that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
+Tasteful edits for creators. Five free editing recipes for your AI (Claude Code, ChatGPT Codex, Grok or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
 
 | Recipe | What it does |
 |---|---|
@@ -14,17 +14,22 @@ These 5 recipes are free.
 
 ## Install
 
-Paste this into Claude Code:
+Paste this into your AI:
 
 ```
-Install the editing recipes from https://github.com/naomimetzger/cookbook into my Claude Code skills, then tell me how to use them in three lines.
+Install the editing recipes from https://github.com/naomimetzger/cookbook into my skills, then tell me how to use them in three lines.
 ```
 
-Or copy the folders in `recipes/` into `~/.claude/skills/` yourself.
+Or copy the folders in `recipes/` yourself:
+- Claude Code: `~/.claude/skills/`
+- ChatGPT Codex: `~/.agents/skills/`
+- Other AIs: put the folder anywhere and say "follow the recipe in this folder"
+
+Built and tested with Claude Code. Other AIs should work if they can run commands on your computer. Tell me if one doesn't.
 
 ## Use
 
-Type a recipe name, like `/bigwords`, and give it your video. It asks a few quick questions, shows you a still first, and only renders when you say yes. To browse the recipes and copy ready-made prompts, open `gallery/index.html`.
+Type a recipe name, like `/bigwords` (or "use the bigwords recipe"), and give it your video. It asks a few quick questions, shows you a still first, and only renders when you say yes. To browse the recipes and copy ready-made prompts, open `gallery/index.html`.
 
 Works on Mac, Windows and Linux. You need Python 3 and ffmpeg. Each recipe checks what's missing and tells you how to get it.
 
