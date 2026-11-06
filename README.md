@@ -1,6 +1,6 @@
 # Naomi's Editing Cookbook
 
-Tasteful edits for creators. Five free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
+Tasteful edits for creators. Preview, customise and copy prompts at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook). Five free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
 
 | Recipe | What it does |
 |---|---|
@@ -29,7 +29,7 @@ Works with Claude Code and ChatGPT Codex.
 
 ## Use
 
-Type a recipe name, like `/bigwords` (or "use the bigwords recipe"), and give it your video. It asks a few quick questions, shows you a still first, and only renders when you say yes. To browse the recipes and copy ready-made prompts, open `gallery/index.html`.
+Type a recipe name, like `/bigwords` (or "use the bigwords recipe"), and give it your video. It asks a few quick questions, shows you a still first, and only renders when you say yes. **Customise and tweak each recipe, then copy your prompt, at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook).**
 
 Works on Mac, Windows and Linux. You need Python 3 and ffmpeg. Each recipe checks what's missing and tells you how to get it.
 
