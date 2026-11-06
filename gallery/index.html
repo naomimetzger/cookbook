@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naomi's Editing Cookbook</title>
+<meta name="description" content="Five free editing recipes for Claude Code: tasteful edits for creators, directed by Naomi Metzger.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <span class="mark">Naomi's Editing Cookbook</span>
+    <nav class="topnav" aria-label="Main">
+      <a href="#filters">Recipes</a>
+      <span class="by">by Naomi Metzger</span>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Tasteful edits for creators, made by AI, directed by me</h1>
+  </section>
+
+  <nav class="filters" id="filters" aria-label="Categories"></nav>
+  <section class="cards" id="cards" aria-label="Recipes"></section>
+  <nav class="pager" id="pager" aria-label="Pages" hidden></nav>
+
+  <section class="setup" aria-labelledby="setup-title">
+    <h2 id="setup-title">Before you start</h2>
+    <div class="setup-grid">
+      <div>
+        <h3>What you need</h3>
+        <p>Claude Code, Python 3 and ffmpeg. They work on Mac, Windows and Linux. Each recipe checks for them first and offers to install anything that's missing.</p>
+        <p class="cmd-label">To check yourself, run this inside a recipe's folder:</p>
+        <pre class="cmd">python3 scripts/check_setup.py</pre>
+        <p class="cmd-label">On Windows, type <code>python</code> instead of <code>python3</code>. It lists anything missing and the install command for your computer.</p>
+      </div>
+      <div>
+        <h3>Add a recipe</h3>
+        <p>Every recipe is one folder. Copy the ones you want into your Claude Code skills folder: <code>.claude/skills</code> in your home folder, or in your project to keep it to one project.</p>
+      </div>
+      <div>
+        <h3>Use it</h3>
+        <p>Pick your options on a card, copy the prompt, paste it into Claude Code and put in your video's file name. You get a still to check before anything renders.</p>
+      </div>
+    </div>
+    <p class="setup-note">This page opens straight from the folder, with no setup. Double-click <code>gallery/index.html</code>.</p>
+  </section>
+
+  <footer class="foot">
+    <p class="foot-more">More recipes coming soon. <a href="https://naomimetzger.com/vox-guide">Get notified</a></p>
+    <p class="foot-more">Want the full documentary look? Manuscripter makes Vox-style reels in Claude (paid). <a href="https://naomimetzger.com/manuscripter">See Manuscripter</a></p>
+    <p>Five free recipes. Made by Naomi Metzger.</p>
+  </footer>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+// "Vox style" teaser: a paid Pro skill, shown after the five free recipes. Same card shape as the others. No install, no prompt.
+(function () {
+  var a = document.createElement("article");
+  a.className = "card tall teaser"; a.id = "voxstyle"; a.tabIndex = 0; a.setAttribute("role", "link");
+  a.innerHTML =
+    '<div class="view"><span class="cat">Pro</span><span class="badge pro-tag">Pro skill</span>' +
+    '<div class="stage teaser-stage"><video muted playsinline autoplay loop preload="metadata" src="https://naomimetzger.com/manuscripter/media/reel.mp4#t=0,8"></video></div></div>' +
+    '<div class="body"><div class="head"><h2 class="name">Vox style</h2><span class="slash">Paid</span></div></div>';
+  var go = function () { window.open("https://naomimetzger.com/manuscripter", "_blank", "noopener"); };
+  a.addEventListener("click", go);
+  a.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+  var v = a.querySelector("video");
+  v.addEventListener("timeupdate", function () { if (v.currentTime > 8) v.currentTime = 0; });
+  document.getElementById("cards").append(a);
+})();
+</script>
+</body>
+</html>
