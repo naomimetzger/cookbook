@@ -1,6 +1,6 @@
 # Naomi's Editing Cookbook
 
-Tasteful edits for creators. Five free editing recipes for your AI (Claude Code, ChatGPT Codex, Grok or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
+Tasteful edits for creators. Five free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
 
 | Recipe | What it does |
 |---|---|
@@ -25,7 +25,7 @@ Or copy the folders in `recipes/` yourself:
 - ChatGPT Codex: `~/.agents/skills/`
 - Other AIs: put the folder anywhere and say "follow the recipe in this folder"
 
-Works with Claude Code, ChatGPT Codex and Grok.
+Works with Claude Code and ChatGPT Codex.
 
 ## Use
 
