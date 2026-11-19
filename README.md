@@ -1,6 +1,6 @@
 # Naomi's Editing Cookbook
 
-Tasteful edits for creators. Preview, customise and copy prompts at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook). Five free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
+Tasteful edits for creators. Preview, customise and copy prompts at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook). Seven free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
 
 | Recipe | What it does |
 |---|---|
@@ -9,8 +9,10 @@ Tasteful edits for creators. Preview, customise and copy prompts at [naomimetzge
 | `/slideup` | You slide up into the top half while your pictures slide in below, with optional captions |
 | `/titlestack` | A three-word title stacked perfectly in line, one word at a time, with your clip in a rounded card |
 | `/clipsonwhite` | Clips on cream: phone clips appear one at a time in a row, every gap exactly equal |
+| `/textbehind` | A big title tucked behind your head, for reel covers and hook titles, in bold caps or white lowercase |
+| `/photobehind` | Proof photos pop in behind your head on the words that need them, one per beat |
 
-These 5 recipes are free.
+These 7 recipes are free.
 
 ## Install
 
