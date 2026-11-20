@@ -1,5 +1,7 @@
 # Naomi's Editing Cookbook
 
+![Stills from the recipes: big words, clips on cream, middle captions, a slide-up, and a stacked title.](gallery/assets/preview.jpg)
+
 Tasteful edits for creators. Preview, customise and copy prompts at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook). Eight free editing recipes for your AI (Claude Code, ChatGPT Codex or any AI that can run commands on your computer) that edit like a real editor would: one effect at a time, no bouncing captions, no pop-ups everywhere.
 
 | Recipe | What it does |
