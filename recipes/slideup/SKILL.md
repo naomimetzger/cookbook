@@ -33,13 +33,14 @@ If the user just types `/slideup` (or asks for it without details), don't guess.
 Works on Mac, Windows and Linux. Before the first run, check what's needed:
 `python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow`
 - On Windows, type `python` instead of `python3` in every command. Ask before installing anything.
+- Phone files just work: HEIC photos open, sideways phone photos are turned upright, and iPhone HDR clips are changed to normal colour first. The clip's own frame rate is kept.
 
 ## Steps
 1. Ask for the video, the image, and the word it should land on, all in one short message.
 2. Check free disk space (`python3 -c "import shutil;print(shutil.disk_usage('.').free//2**30,'GB free')"`). If less than 2 GB is free, stop and tell them.
 3. Make a still first: `python3 <skill-dir>/scripts/slideup.py INPUT slideup_still_v1.png --image IMAGE --at T --still <T + 1>`. Show it and check the image matches what's being said at that moment, and reads clearly.
 4. Ask before any video render, then make a rough cut (`--rough`), then the final after a yes. Judge smoothness at full quality. Clip sound is kept.
-5. Never overwrite a file. Each new version gets the next number (v2, v3…). Each output comes with a `.settings.txt`.
+5. Never overwrite a file (the script refuses if the name is taken). Each new version gets the next number (v2, v3…). Each output comes with a `.settings.txt`.
 
 ## Reference look
 Before rendering, look at a few frames of `demo/reference.mp4` and match its look, placement and timing. Then compare a still of your result against it.

@@ -25,12 +25,13 @@ If the user just types `/gridmat` (or asks for it without details), don't guess.
 Works on Mac, Windows and Linux. Before the first run, check what's needed:
 `python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow`
 - On Windows, type `python` instead of `python3` in every command. Ask before installing anything.
+- Phone files just work: HEIC photos open, sideways phone photos are turned upright, and iPhone HDR clips are changed to normal colour first. The clip's own frame rate is kept.
 
 ## Steps
 1. Ask for the clip or photo and the mat colour, all in one short message.
 2. Check free disk space (`python3 -c "import shutil;print(shutil.disk_usage('.').free//2**30,'GB free')"`). If less than 2 GB is free, stop and tell them.
 3. Make a still first (`--still 1`), then ask before a rough cut (`--rough --length 3`), then the final after a yes. The clip's sound is kept.
-4. Never overwrite a file. Each new version gets the next number.
+4. Never overwrite a file (the script refuses if the name is taken). Each new version gets the next number.
 
 ## Rules
 - One effect on its own. No stickers, doodles or extra props unless asked; those would be other recipes.

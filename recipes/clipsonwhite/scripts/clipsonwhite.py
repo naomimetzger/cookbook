@@ -8,26 +8,44 @@ by side in a neat row on a white page, with equal gaps. Each clip starts playing
   CLIP@12.5-15     use only 12.5-15s of that clip (its best bit); it leaves when that ends (never freezes)
   --every 0.5      seconds between each clip appearing (or --at 0 0.4 1.2 for exact times)
   --height 0.6     clip height as a share of the frame height
-  --gap 0.02       gap between clips as a share of the frame width (all gaps equal)
+  --gap 0.05       gap between clips as a share of the frame width (all gaps equal)
   --y 0.5          where the row sits, 0 = top, 1 = bottom (0.5 = centred)
-  --bg paper       page: paper (soft off-white with fine grain, default) or a colour
+  --bg cream       page: cream (#F6F0E3, default), paper (soft off-white with fine grain) or a colour
   --radius 0.07    rounded corners (share of clip width, 0 = square)   --shadow 0.25  soft shadow (0 = none)          --frame 16:9   16:9 or 9:16
   --audio 1        which clip's sound to keep (0 = silent)
   --exit 0         0 (default) = the whole row cuts away at once, abruptly, at the end.
                    Above 0 = clips leave one by one, last in first out, this many seconds apart.
   --still 1.0 / --rough / --length 4
 
-Works on Mac, Windows and Linux. Needs ffmpeg.
+Works on Mac, Windows and Linux. Needs ffmpeg and Pillow.
 """
-import json, os, re, shlex, subprocess, sys, tempfile, platform
+import json, os, re, shlex, shutil, subprocess, sys, platform
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from media import (load_image, prepare_video, safe_output, temp_dir, frame_rate, is_image,  # noqa: E402
+                   COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP)
+
+
+
+def fps_text(f):
+    """media.frame_rate() as ffmpeg wants it: exact fractions for the NTSC rates (23.976 -> 24000/1001)."""
+    return {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}.get(f, f"{f:g}")
+
+CREAM = "#F6F0E3"   # the approved page colour (gallery and demo/reference.mp4)
 
 
 def even(n):
     n = int(round(n)); return n - (n % 2)
 
 
-def is_image(p):
-    return p.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".heic"))
+def ready(path, tmp):
+    """A photo becomes an upright PNG (HEIC and phone rotation handled); a video gets normal colour."""
+    os.makedirs(tmp, exist_ok=True)
+    if is_image(path):
+        out = os.path.join(tmp, "photo.png")
+        load_image(path).save(out)
+        return out
+    return prepare_video(path, tmp)
 
 
 def display_size(path):
@@ -102,18 +120,18 @@ def push_chain(W, H, push, dur, cx=0.5, cy=0.5):
             f"crop={2 * W}:{2 * H}:x='(iw-{2 * W})*{cx}':y='(ih-{2 * H})*{cy}',scale={W}:{H}")
 
 
-def finish(a, cmd, out, audio_from, length, info):
+def finish(a, cmd, out, audio_from, length, info, fps="30"):
     """Add audio + encoder (or still frame) options, run, write settings."""
     if a.still is not None:
         cmd += ["-frames:v", "1", out]
     else:
         if audio_from is not None:
-            cmd += ["-map", f"{audio_from}:a:0?", "-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-map", f"{audio_from}:{AUDIO_MAP}", "-c:a", "aac", "-b:a", "192k"]
         crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
-        cmd += ["-t", f"{length:.3f}", "-r", "30", "-c:v", "libx264", "-crf", crf, "-preset", preset,
-                "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out]
+        cmd += ["-t", f"{length:.3f}", "-r", fps, "-c:v", "libx264", "-crf", crf, "-preset", preset,
+                "-pix_fmt", "yuv420p", *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
@@ -139,7 +157,7 @@ def main():
     p.add_argument("output"); p.add_argument("clips", nargs="+")
     p.add_argument("--every", type=float, default=0.5); p.add_argument("--at", type=float, nargs="+")
     p.add_argument("--height", type=float, default=0.6); p.add_argument("--gap", type=float, default=0.05)
-    p.add_argument("--y", type=float, default=0.5); p.add_argument("--bg", default="paper")
+    p.add_argument("--y", type=float, default=0.5); p.add_argument("--bg", default="cream")
     p.add_argument("--radius", type=float, default=0.07); p.add_argument("--shadow", type=float, default=0.25)
     p.add_argument("--exit", type=float, default=0.0)
     p.add_argument("--equal", action="store_true", help="size the clips so every gap and every margin (left, right, top, bottom) is exactly the same")
@@ -150,6 +168,23 @@ def main():
     n = len(clips)
     if not 1 <= n <= 4:
         raise SystemExit(f"/clipsonwhite takes 1 to 4 clips; got {n}.")
+    for f, _, _ in clips:
+        if not os.path.exists(f):
+            raise SystemExit(f"Can't find {f}")
+    safe_output(a.output)                       # never overwrite: refuse before doing any work
+    tmp = temp_dir("clipsonwhite_")
+    try:
+        make(a, clips, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def make(a, clips, tmp):
+    n = len(clips)
+    clips = [(ready(f, os.path.join(tmp, f"in{i}")), t0, t1) for i, (f, t0, t1) in enumerate(clips)]
+    vids = [f for f, _, _ in clips if not is_image(f)]
+    fps = frame_rate(vids[0]) if vids else 30      # keep the clips' frame rate (photos only: 30)
+    fr = fps_text(fps)
     W, H = (1920, 1080) if a.frame == "16:9" else (1080, 1920)
     if a.rough:
         W, H = W // 2, H // 2
@@ -174,8 +209,9 @@ def main():
             length = min(a.length, min(ends)) if a.length else min(ends)
     seek = a.still if a.still is not None else 0.0
     from PIL import Image, ImageDraw, ImageFilter
-    tmp = tempfile.mkdtemp(prefix="clipsonwhite_")
-    # page: plain colour, or "paper" = soft off-white with fine grain
+    # page: cream (default), "paper" = soft off-white with fine grain, or any colour
+    if a.bg == "cream":
+        a.bg = CREAM
     if a.bg == "paper":
         page = Image.blend(Image.new("L", (W, H), 244), Image.effect_noise((W, H), 22), 0.05).convert("RGB")
     else:
@@ -194,8 +230,8 @@ def main():
         sh = sh.filter(ImageFilter.GaussianBlur(max(2, int(ch * 0.04))))
         img = Image.new("RGBA", sh.size, (0, 0, 0, 255)); img.putalpha(sh)
         shf = os.path.join(tmp, "shadow.png"); img.save(shf)
-    lines = [f"[{n}:v]fps=30,format=rgba[c0]"]
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    lines = [f"[{n}:v]fps={fr},format=rgba[c0]"]
+    cmd = ["ffmpeg", "-n", "-hide_banner", "-loglevel", "error"]
     for i, ((f, t0, t1), ti) in enumerate(zip(clips, times)):
         played = max(0.0, seek - ti)                          # how far this clip has played at the still
         use = (t1 - t0) if t1 else length + 0.2
@@ -210,7 +246,7 @@ def main():
         lines.append(f"[{si}:v]format=rgba,split={n}" + "".join(f"[s{i}]" for i in range(n)))
     for i, ((f, t0, t1), ti) in enumerate(zip(clips, times)):
         x = x0 + i * (cw + g)
-        lines.append(f"[{i}:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},setsar=1,fps=30,format=rgba,"
+        lines.append(f"[{i}:v:0]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},setsar=1,fps={fr},format=rgba,"
                      f"setpts=PTS-STARTPTS+{max(0.0, ti - seek):.3f}/TB[v{i}];[v{i}][m{i}]alphamerge[r{i}]")
         out = length - a.exit * (i + 1) if a.exit > 0 else length + 1
         if t1:                                                # leave when its best bit ends, never freeze
@@ -218,15 +254,15 @@ def main():
         en = f"enable='between(t\\,{max(0.0, ti - seek):.3f}\\,{out - seek:.3f})'"
         src = f"c{i}"
         if shf:
-            lines.append(f"[{src}][s{i}]overlay={x - pad}:{y - pad}:{en}[d{i}]"); src = f"d{i}"
-        lines.append(f"[{src}][r{i}]overlay={x}:{y}:{en}:eof_action=pass[c{i + 1}]")
-    lines.append(f"[c{n}]format=yuv420p[out]")
+            lines.append(f"[{src}][s{i}]overlay={x - pad}:{y - pad}:{en}:format=rgb[d{i}]"); src = f"d{i}"
+        lines.append(f"[{src}][r{i}]overlay={x}:{y}:{en}:eof_action=pass:format=rgb[c{i + 1}]")
+    lines.append(f"[c{n}]{RGB_TO_YUV}[out]")
     cmd += ["-filter_complex", ";".join(lines), "-map", "[out]"]
     au = None
     if 1 <= a.audio <= n and has_audio(clips[a.audio - 1][0]):
         au = a.audio - 1
     finish(a, cmd, a.output, au, length,
-           f"{W}x{H}, {n} clips {cw}x{ch}, gap {g}px, row from x={x0}, y={y}, appear at {times}")
+           f"{W}x{H}, {fr} fps, {n} clips {cw}x{ch}, gap {g}px, row from x={x0}, y={y}, page {a.bg}, appear at {times}", fr)
 
 
 if __name__ == "__main__":

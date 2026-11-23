@@ -29,6 +29,7 @@ Works on Mac, Windows and Linux. Before the first run, check what's needed:
 `python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow`
 - On Windows, type `python` instead of `python3` in every command.
 - If something is missing, it prints the right install command for that computer. Ask the user before installing anything; Python packages install with `--install`.
+- Phone files just work: HEIC photos open, sideways phone photos are turned upright, and iPhone HDR clips are changed to normal colour first. The clip's own frame rate is kept.
 
 ## Steps
 1. Ask for the three lines of text (and a clip to put it over, if any), plus any choices they haven't given, all in one short message. Otherwise use the defaults.
@@ -38,7 +39,7 @@ Works on Mac, Windows and Linux. Before the first run, check what's needed:
    Show it and check the big word fills the width without crowding the edges.
 4. Ask before any video render. When they say yes, make a short rough cut with the same settings plus `--rough`.
 5. Do the full render only after they approve the rough cut.
-6. Never overwrite a file. Each new version gets the next number (v2, v3…). Every output comes with a `.settings.txt` holding the exact command.
+6. Never overwrite a file (the script refuses if the name is taken). Each new version gets the next number (v2, v3…). Every output comes with a `.settings.txt` holding the exact command.
 
 ## Reference look
 Before rendering, look at a few frames of `demo/reference.mp4` and match its look, placement and timing. Then compare a still of your result against it.

@@ -9,7 +9,7 @@ Real proof, shown the moment it's said, without leaving the talking head. For ex
 
 ## The choices (plain words → options)
 - **Which words:** the stretch of video (`--from 7.6 --to 13.6`) and when each photo lands, in seconds from that start (`--photo title1.png@0.40`). Land each photo on the stressed word; use word timings from a transcript, then check by ear.
-- **Which photos:** the user's real photos only, never stock or mock-ups. Ask whether other people's faces should be blurred.
+- **Which photos:** the user's real photos only, never stock or mock-ups. Photos only, not videos: for a moment from a clip, use a still from it. Ask whether other people's faces should be blurred.
 - **When they go:** `--end 3.0` (seconds from the start). The last photo leaves before the next scene.
 - **Size/position:** `--scale 0.9`, `--top 0.18`. By default the photo is 27% of the frame's height, its top 20% down, centred over the head, with slightly rounded corners.
 
@@ -22,9 +22,10 @@ If the user just types `/photobehind` (or asks for it without details), don't gu
 
 ## Setup (any computer)
 Works on Mac, Windows and Linux. Before the first run, check what's needed:
-`python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow`
+`python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow cutout`
 - **Mac (macOS 14+):** the cut-out uses Apple's built-in subject lifting (free, offline). It builds itself on first run and needs the Xcode command line tools (`xcode-select --install`).
-- **Windows / Linux:** the cut-out uses rembg: `python3 <skill-dir>/scripts/check_setup.py --install rembg`.
+- **Windows / Linux:** the cut-out uses rembg (`rembg[cpu]`): `python3 <skill-dir>/scripts/check_setup.py --install rembg`. Its model downloads once (about 176 MB). The script stops and asks first; after a yes, add `--allow-download`.
+- Phone files are handled: HEIC photos, sideways phone photos and iPhone HDR video.
 - On Windows, type `python` instead of `python3`. Ask before installing anything.
 
 ## Steps

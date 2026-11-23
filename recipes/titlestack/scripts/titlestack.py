@@ -23,15 +23,31 @@ right, e.g.  the / FLASH CUT / transition. The words appear one at a time.
 
 Works on Mac, Windows and Linux (fonts fall back to the closest one on each computer).
 """
-import json, os, re, shlex, subprocess, sys, tempfile, platform
+import json, os, re, shlex, shutil, subprocess, sys, platform
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from media import (load_image, prepare_video, safe_output, temp_dir, frame_rate, is_image,  # noqa: E402
+                   COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP)
+
+
+
+def fps_text(f):
+    """media.frame_rate() as ffmpeg wants it: exact fractions for the NTSC rates (23.976 -> 24000/1001)."""
+    return {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}.get(f, f"{f:g}")
 
 
 def even(n):
     n = int(round(n)); return n - (n % 2)
 
 
-def is_image(p):
-    return p.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".heic"))
+def ready(path, tmp):
+    """A photo becomes an upright PNG (HEIC and phone rotation handled); a video gets normal colour."""
+    os.makedirs(tmp, exist_ok=True)
+    if is_image(path):
+        out = os.path.join(tmp, "photo.png")
+        load_image(path).save(out)
+        return out
+    return prepare_video(path, tmp)
 
 
 def display_size(path):
@@ -110,18 +126,18 @@ def push_chain(W, H, push, dur, cx=0.5, cy=0.5):
             f"crop={2 * W}:{2 * H}:x='(iw-{2 * W})*{cx}':y='(ih-{2 * H})*{cy}',scale={W}:{H}")
 
 
-def finish(a, cmd, out, audio_from, length, info):
+def finish(a, cmd, out, audio_from, length, info, fps="30"):
     """Add audio + encoder (or still frame) options, run, write settings."""
     if a.still is not None:
         cmd += ["-frames:v", "1", out]
     else:
         if audio_from is not None:
-            cmd += ["-map", f"{audio_from}:a:0?", "-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-map", f"{audio_from}:{AUDIO_MAP}", "-c:a", "aac", "-b:a", "192k"]
         crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
-        cmd += ["-t", f"{length:.3f}", "-r", "30", "-c:v", "libx264", "-crf", crf, "-preset", preset,
-                "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out]
+        cmd += ["-t", f"{length:.3f}", "-r", fps, "-c:v", "libx264", "-crf", crf, "-preset", preset,
+                "-pix_fmt", "yuv420p", *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
@@ -155,7 +171,6 @@ def pixel_img(text, path, idx, color, max_w, max_h):
 
 def main():
     import argparse
-    from PIL import Image, ImageFont
     p = argparse.ArgumentParser()
     p.add_argument("output"); p.add_argument("--top", default=""); p.add_argument("--big", required=True)
     p.add_argument("--bottom", default=""); p.add_argument("--over"); p.add_argument("--bg", default="#F6F0E3")
@@ -170,6 +185,24 @@ def main():
     p.add_argument("--still", type=float); p.add_argument("--rough", action="store_true")
     p.add_argument("--start", type=float, default=0); p.add_argument("--length", type=float)
     a = p.parse_args()
+    safe_output(a.output)                       # never overwrite: refuse before doing any work
+    tmp = temp_dir("titlestack_")
+    try:
+        make(a, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def make(a, tmp):
+    from PIL import Image, ImageFont
+    if a.over:
+        a.over = ready(a.over, os.path.join(tmp, "over"))
+    if a.card:
+        a.card = ready(a.card, os.path.join(tmp, "card"))
+    # keep the clip's frame rate (24 stays 24); a title on its own or over a photo is 30
+    clip = a.over if a.over and not is_image(a.over) else a.card if a.card and not is_image(a.card) else None
+    fps = frame_rate(clip) if clip else 30
+    fr = fps_text(fps)
     if a.over:
         iw, ih = display_size(a.over)
         W, H = (1080, 1920) if ih > iw else (1920, 1080)
@@ -228,20 +261,19 @@ def main():
     if bot:
         layers.append((bot, bx + br[2] - bot.width, y)); y += bot.height
     card_xy = (((W - card[0]) // 2 if a.card_shape else bx), y + gap * 3) if card else None
-    tmp = tempfile.mkdtemp(prefix="titlestack_")
     files = []
     for k, (im, x, yy) in enumerate(layers):
         full = Image.new("RGBA", (W, H), (0, 0, 0, 0)); full.alpha_composite(im, (x, yy))
         f = os.path.join(tmp, f"w{k}.png"); full.save(f); files.append(f)
     seek = a.still if a.still is not None else a.start
     off = seek if a.still is not None else 0.0
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    cmd = ["ffmpeg", "-n", "-hide_banner", "-loglevel", "error"]
     if a.over:
         cmd += source_args(a.over, 0 if is_image(a.over) else seek, length + 0.1)
-        base = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30[b0]"
+        base = f"[0:v:0]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={fr},format=rgba[b0]"
     else:
-        cmd += ["-f", "lavfi", "-i", f"color=c={colour(a.bg)}:s={W}x{H}:r=30:d={length + 0.1:.3f}"]
-        base = "[0:v]setsar=1[b0]"
+        cmd += ["-f", "lavfi", "-i", f"color=c={colour(a.bg)}:s={W}x{H}:r={fr}:d={length + 0.1:.3f}"]
+        base = "[0:v]setsar=1,format=rgba[b0]"
     for f in files:
         cmd += ["-loop", "1", "-i", f]
     lines = [base]
@@ -255,9 +287,9 @@ def main():
         ci_idx = len(files) + 1
         cmd += (["-loop", "1", "-i", a.card] if is_image(a.card) else ["-ss", str(a.card_start), "-i", a.card])
         cmd += ["-loop", "1", "-i", cmask]
-        lines.append(f"[{ci_idx}:v]scale={card[0]}:{card[1]}:force_original_aspect_ratio=increase,crop={card[0]}:{card[1]},"
-                     f"setsar=1,fps=30,format=rgba[cv];[{ci_idx + 1}:v]format=gray[cm];[cv][cm]alphamerge[cc];"
-                     f"[b0][cc]overlay={card_xy[0]}:{card_xy[1]}:eof_action=pass[b0c]")
+        lines.append(f"[{ci_idx}:v:0]scale={card[0]}:{card[1]}:force_original_aspect_ratio=increase,crop={card[0]}:{card[1]},"
+                     f"setsar=1,fps={fr},format=rgba[cv];[{ci_idx + 1}:v]format=gray[cm];[cv][cm]alphamerge[cc];"
+                     f"[b0][cc]overlay={card_xy[0]}:{card_xy[1]}:eof_action=pass:format=rgb[b0c]")
         lines[0] = lines[0]
         base_label = "b0c"
     else:
@@ -265,8 +297,8 @@ def main():
     for k in range(len(files)):
         t = k * a.every - off
         src_lbl = base_label if k == 0 else f"b{k}"
-        lines.append(f"[{src_lbl}][{k + 1}:v]overlay=enable='gte(t\\,{t:.3f})':shortest=1[b{k + 1}]")
-    lines.append(f"[b{len(files)}]format=yuv420p[out]")
+        lines.append(f"[{src_lbl}][{k + 1}:v]overlay=enable='gte(t\\,{t:.3f})':shortest=1:format=rgb[b{k + 1}]")
+    lines.append(f"[b{len(files)}]{RGB_TO_YUV}[out]")
     cmd += ["-filter_complex", ";".join(lines), "-map", "[out]"]
     audio_in = None
     if a.over and has_audio(a.over):
@@ -274,7 +306,7 @@ def main():
     elif card and not is_image(a.card) and has_audio(a.card) and not a.mute_card:
         audio_in = ci_idx                                     # the rounded card clip's own sound
     finish(a, cmd, a.output, audio_in, length,
-           f"{W}x{H}, '{a.top}' / '{a.big}' / '{a.bottom}', big font {a.big_font} {a.color}, small {a.small_font}, every {a.every}s")
+           f"{W}x{H}, {fr} fps, '{a.top}' / '{a.big}' / '{a.bottom}', big font {a.big_font} {a.color}, small {a.small_font}, every {a.every}s", fr)
 
 
 if __name__ == "__main__":

@@ -20,15 +20,31 @@ playing. Portrait-first (9:16), works wide too.
 
 Works on Mac, Windows and Linux. Needs ffmpeg and Pillow.
 """
-import json, os, re, shlex, subprocess, sys, tempfile, platform
+import json, os, re, shlex, shutil, subprocess, sys, platform
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from media import (load_image, prepare_video, safe_output, temp_dir, frame_rate, is_image,  # noqa: E402
+                   COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP)
+
+
+
+def fps_text(f):
+    """media.frame_rate() as ffmpeg wants it: exact fractions for the NTSC rates (23.976 -> 24000/1001)."""
+    return {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}.get(f, f"{f:g}")
 
 
 def even(n):
     n = int(round(n)); return n - (n % 2)
 
 
-def is_image(p):
-    return p.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".heic"))
+def ready(path, tmp):
+    """A photo becomes an upright PNG (HEIC and phone rotation handled); a video gets normal colour."""
+    os.makedirs(tmp, exist_ok=True)
+    if is_image(path):
+        out = os.path.join(tmp, "photo.png")
+        load_image(path).save(out)
+        return out
+    return prepare_video(path, tmp)
 
 
 def display_size(path):
@@ -103,18 +119,18 @@ def push_chain(W, H, push, dur, cx=0.5, cy=0.5):
             f"crop={2 * W}:{2 * H}:x='(iw-{2 * W})*{cx}':y='(ih-{2 * H})*{cy}',scale={W}:{H}")
 
 
-def finish(a, cmd, out, audio_from, length, info):
+def finish(a, cmd, out, audio_from, length, info, fps="30"):
     """Add audio + encoder (or still frame) options, run, write settings."""
     if a.still is not None:
         cmd += ["-frames:v", "1", out]
     else:
         if audio_from is not None:
-            cmd += ["-map", f"{audio_from}:a:0?", "-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-map", f"{audio_from}:{AUDIO_MAP}", "-c:a", "aac", "-b:a", "192k"]
         crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
-        cmd += ["-t", f"{length:.3f}", "-r", "30", "-c:v", "libx264", "-crf", crf, "-preset", preset,
-                "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out]
+        cmd += ["-t", f"{length:.3f}", "-r", fps, "-c:v", "libx264", "-crf", crf, "-preset", preset,
+                "-pix_fmt", "yuv420p", *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
@@ -129,7 +145,7 @@ def grab_frames(path, t0, dur, fps, W, H, fit="cover"):
     vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}" if fit == "cover"
           else f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0")
     if is_image(path):
-        im = Image.open(path).convert("RGB")
+        im = load_image(path)
         buf = io.BytesIO(); im.save(buf, "PNG")
         raw = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                              input=buf.getvalue(), capture_output=True).stdout
@@ -153,14 +169,15 @@ def ease_io(u):
 def stitch(a, out, A, B, startA, holdA, startB, holdB, T, fps, W, H, seq_dir, info, prep_a="", prep_b=""):
     """A for holdA, the drawn transition (PNG sequence, T seconds), then B for holdB. Sound crossfades."""
     seek_b = startB + T
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    safe_output(out)
+    cmd = ["ffmpeg", "-n", "-hide_banner", "-loglevel", "error"]
     cmd += source_args(A, startA, holdA + T + 0.2)
     cmd += ["-framerate", str(fps), "-i", os.path.join(seq_dir, "%05d.png")]
     cmd += source_args(B, seek_b if not is_image(B) else 0, holdB + 0.2)
     vf = lambda i, extra: (f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={fps}"
                            f"{extra},format=yuv420p")
     lines = [vf(0, prep_a) + f",trim=duration={holdA:.3f},setpts=PTS-STARTPTS[v0]",
-             f"[1:v]fps={fps},setsar=1,format=yuv420p,setpts=PTS-STARTPTS[v1]",
+             f"[1:v]fps={fps},setsar=1,{RGB_TO_YUV},setpts=PTS-STARTPTS[v1]",
              vf(2, prep_b) + f",trim=duration={holdB:.3f},setpts=PTS-STARTPTS[v2]",
              "[v0][v1][v2]concat=n=3:v=1:a=0[out]"]
     total = holdA + T + holdB
@@ -180,9 +197,9 @@ def stitch(a, out, A, B, startA, holdA, startB, holdB, T, fps, W, H, seq_dir, in
     cmd += ["-filter_complex", ";".join(lines), "-map", "[out]"] + amap
     crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
     cmd += ["-t", f"{total:.3f}", "-c:v", "libx264", "-crf", crf, "-preset", preset, "-pix_fmt", "yuv420p",
-            "-threads", "2", "-movflags", "+faststart", out]
+            *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
@@ -215,7 +232,6 @@ def soft_shadow(w, h, r, strength, blur):
 
 def main():
     import argparse
-    from PIL import Image
     p = argparse.ArgumentParser()
     p.add_argument("video"); p.add_argument("output")
     p.add_argument("--image", required=True, nargs="+", help="one picture, or several that take turns in the bottom panel (stack layout)")
@@ -237,7 +253,21 @@ def main():
     images, times = a.image, a.at
     if len(times) != len(images):
         raise SystemExit("Give one --at time for each --image")
+    safe_output(a.output)                       # never overwrite: refuse before doing any work
+    tmp = temp_dir("slideup_")
+    try:
+        make(a, images, times, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def make(a, images, times, tmp):
+    from PIL import Image
+    a.video = ready(a.video, os.path.join(tmp, "video"))
+    images = [ready(im, os.path.join(tmp, f"image{i}")) for i, im in enumerate(images)]
     a.image, a.at = images[0], times[0]
+    fps = frame_rate(a.video)                   # keep the speaker's frame rate (24 stays 24)
+    fr = fps_text(fps)
     iw, ih = display_size(a.video)
     if a.frame == "auto":
         a.frame = "16:9" if iw >= ih else "9:16"
@@ -254,13 +284,12 @@ def main():
     cw, ch = even(cw), even(ch)
     x0 = (W - cw) // 2; y_end = int(H * a.y - ch / 2)
     r = max(1, int(W * a.radius))
-    tmp = tempfile.mkdtemp(prefix="slideup_")
     mask = os.path.join(tmp, "mask.png"); round_mask(cw, ch, r).save(mask)
     sh, pad = soft_shadow(cw, ch, r, a.shadow, max(4, ch * 0.025)) if a.shadow > 0 else (Image.new("RGBA", (2, 2)), 0)
     shp = os.path.join(tmp, "shadow.png"); sh.save(shp)
     seek = a.start
     if a.still is not None:          # a still: render the effect up to that moment and keep the last frame
-        length = max(1 / 24, a.still - a.start + 1 / 24)
+        length = max(1 / fps, a.still - a.start + 1 / fps)
     else:
         length = a.length or max(0.1, duration(a.video) - seek)
     t0 = a.at - seek; t1 = (t0 + a.hold) if a.hold > 0 else 1e6
@@ -282,15 +311,15 @@ def main():
     y_card = f"{y_end}+{H}*(1-{push})+{lag}*(1-{settle})"
     sc = f"scale={W}:{H}:force_original_aspect_ratio=increase"
     crop = f"crop={W}:{H}:(iw-{W})*{a.face}:(ih-{H})/2"
-    img_in = ["-loop", "1", "-framerate", "24", "-t", f"{length + 0.2:.3f}", "-i", a.image] if is_image(a.image) else \
+    img_in = ["-loop", "1", "-framerate", fr, "-t", f"{length + 0.2:.3f}", "-i", a.image] if is_image(a.image) else \
              ["-stream_loop", "-1", "-t", f"{length + 0.2:.3f}", "-i", a.image]
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{seek:.3f}", "-t", f"{length + 0.05:.3f}", "-i", a.video]
+    cmd = ["ffmpeg", "-n", "-hide_banner", "-loglevel", "error", "-ss", f"{seek:.3f}", "-t", f"{length + 0.05:.3f}", "-i", a.video]
     cmd += img_in + ["-loop", "1", "-i", mask, "-loop", "1", "-i", shp]
-    chain = [f"[0:v]fps=24,{sc},{crop},setsar=1,format=yuv420p[v]",
-             f"color=c=black:s={W}x{H}:r=24,format=yuv420p[base]",
-             f"[1:v]fps=24,setsar=1,split[ib][ic]",
-             f"[ib]{sc},crop={W}:{H},gblur=sigma={H * a.blur:.1f},eq=brightness={-a.dim:.3f}:saturation=0.75,format=yuv420p[bg]",
-             f"[ic]scale={cw}:{ch}:flags=lanczos,setsar=1,format=rgba[c0];[2:v]format=gray,scale={cw}:{ch}[m];[c0][m]alphamerge[card]",
+    chain = [f"[0:v:0]fps={fr},{sc},{crop},setsar=1,format=yuv420p[v]",
+             f"color=c=black:s={W}x{H}:r={fr},format=rgb24,{RGB_TO_YUV}[base]",
+             f"[1:v:0]fps={fr},setsar=1,split[ib][ic]",
+             f"[ib]{sc},crop={W}:{H},gblur=sigma={H * a.blur:.1f},eq=brightness={-a.dim:.3f}:saturation=0.75,{RGB_TO_YUV}[bg]",
+             f"[ic]scale={cw}:{ch}:flags=lanczos,setsar=1,format=rgba[c0];[2:v]format=gray,scale={cw}:{ch}[m];[c0][m]alphamerge,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[card]",
              f"[base][v]overlay=x=0:y='-{H}*{e}':eval=frame:shortest=1[v1]",
              f"[v1][bg]overlay=x=0:y='{H}*(1-{push})':eval=frame:enable='{on}':eof_action=pass[v2]",
              f"[v2][3:v]overlay=x={x0 - pad}:y='{y_card}-{pad}+{int(ch * 0.012)}':eval=frame:enable='{on}':format=auto[v3]",
@@ -299,7 +328,7 @@ def main():
         # the first picture slides up into the bottom panel; each later one simply replaces it on its word
         extra = []
         for im in images[1:]:
-            extra += (["-loop", "1", "-framerate", "24", "-t", f"{length + 0.2:.3f}", "-i", im] if is_image(im) else
+            extra += (["-loop", "1", "-framerate", fr, "-t", f"{length + 0.2:.3f}", "-i", im] if is_image(im) else
                       ["-stream_loop", "-1", "-t", f"{length + 0.2:.3f}", "-i", im])
         cmd += extra
         ph = even(H * a.split)
@@ -310,10 +339,10 @@ def main():
             # showing the whole height of their shot instead of a tight crop
             zf = H / top
             pw = even(vw * top / vh)
-            ot = f"(floor(on/24*{a.steps:g})/{a.steps:g})" if a.steps > 0 else "(on/24)"
+            ot = f"(floor(on/{fps:.6f}*{a.steps:g})/{a.steps:g})" if a.steps > 0 else f"(on/{fps:.6f})"
             uz = f"min(max(({ot}-{t0:.3f})/{a.push:.3f}{C}0){C}1)"
             pz = f"if(lt({uz}{C}0.5){C}4*pow({uz}{C}3){C}1-pow(2-2*{uz}{C}3)/2)"
-            onz = f"between(on/24{C}{t0:.3f}{C}{t1:.3f})"
+            onz = f"between(on/{fps:.6f}{C}{t0:.3f}{C}{t1:.3f})"
             if a.out is not None:      # slide back down: the same eased, stepped move in reverse
                 to = a.out - seek; op = a.out_push or a.push
                 uo = f"min(max(({ot}-{to:.3f})/{op:.3f}{C}0){C}1)"
@@ -323,40 +352,40 @@ def main():
             # the pictures sit in the shot's own frame, right under the speaker, and the whole frame eases out:
             # the speaker shrinks up into the top part and the picture rises with it, edge to edge, no gap
             zoomed = True
-            speaker = (f"[0:v]fps=24,scale={pw}:{top},setsar=1,crop={W}:{top}:({pw}-{W})*{a.face}:0,"
+            speaker = (f"[0:v:0]fps={fr},scale={pw}:{top},setsar=1,crop={W}:{top}:({pw}-{W})*{a.face}:0,"
                        f"pad={W}:{H}:0:0:black[canvas0]")
             shift = 0
         else:
             zoomed = False
-            speaker = f"[0:v]fps=24,{sc},{crop},setsar=1,format=yuv420p[v]"
+            speaker = f"[0:v:0]fps={fr},{sc},{crop},setsar=1,format=yuv420p[v]"
             shift = int(max(0, min(ph, a.face_y * H - top / 2)))
         if zoomed:
-            chain = [speaker, f"[1:v]fps=24,setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},format=yuv420p[pic]",
+            chain = [speaker, f"[1:v:0]fps={fr},setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},{RGB_TO_YUV}[pic]",
                      f"[canvas0][pic]overlay=x=0:y={top}:enable='gte(t{C}{t0:.3f})':eof_action=pass[c0]"]
             for k, tk in enumerate(times[1:], 1):
-                chain.append(f"[{3 + k}:v]fps=24,setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},format=yuv420p[pic{k}]")
+                chain.append(f"[{3 + k}:v]fps={fr},setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},{RGB_TO_YUV}[pic{k}]")
                 chain.append(f"[c{k - 1}][pic{k}]overlay=x=0:y={top}:enable='gte(t{C}{tk - seek:.3f})':eof_action=pass[c{k}]")
-            chain.append(f"[c{len(images) - 1}]zoompan=z='{zexpr}':x='(iw-iw/zoom)/2':y=0:d=1:s={W}x{H}:fps=24,format=yuv420p[out]")
+            chain.append(f"[c{len(images) - 1}]zoompan=z='{zexpr}':x='(iw-iw/zoom)/2':y=0:d=1:s={W}x{H}:fps={fr},format=yuv420p[out]")
         chain = chain if zoomed else [speaker,
-                 f"color=c=black:s={W}x{H}:r=24,format=yuv420p[base]",
-                 f"[1:v]fps=24,setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},format=yuv420p[pic]",
+                 f"color=c=black:s={W}x{H}:r={fr},format=rgb24,{RGB_TO_YUV}[base]",
+                 f"[1:v:0]fps={fr},setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},{RGB_TO_YUV}[pic]",
                  f"[base][v]overlay=x=0:y='-{shift}*{e}':eval=frame:shortest=1[v1]",
                  f"[v1][pic]overlay=x=0:y='{H}-{ph}*{push}':eval=frame:enable='{on}':eof_action=pass[p0]"]
         for k, tk in enumerate(times[1:] if not zoomed else [], 1):
             tk = tk - seek
             onk = f"between(t{C}{tk:.3f}{C}{t1:.3f})"
-            chain.append(f"[{3 + k}:v]fps=24,setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},format=yuv420p[pic{k}]")
+            chain.append(f"[{3 + k}:v]fps={fr},setsar=1,scale={W}:{ph}:force_original_aspect_ratio=increase,crop={W}:{ph},{RGB_TO_YUV}[pic{k}]")
             chain.append(f"[p{k - 1}][pic{k}]overlay=x=0:y={H - ph}:enable='{onk}':eof_action=pass[p{k}]")   # later pictures simply replace it (hard cut)
         if not zoomed:
             chain.append(f"[p{len(images) - 1}]format=yuv420p[out]")
     cmd += ["-filter_complex", ";".join(chain), "-map", "[out]"]
     if a.still is not None:
         tmpv = os.path.join(tmp, "still.mp4")
-        subprocess.run(cmd + ["-an", "-c:v", "libx264", "-crf", "16", "-t", f"{length:.3f}", tmpv], check=True)
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-sseof", "-0.1", "-i", tmpv, "-update", "1", a.output], check=True)
+        subprocess.run(cmd + ["-an", "-c:v", "libx264", "-crf", "16", *COLOR_TAGS, "-t", f"{length:.3f}", tmpv], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-n", "-sseof", "-0.1", "-i", tmpv, "-update", "1", a.output], check=True)
         print(f"Done: {a.output}"); return
     finish(a, cmd, a.output, 0 if has_audio(a.video) else None, length,
-           f"{W}x{H}, card {cw}x{ch} settles at y {y_end}, push at {a.at}s ({a.push}s), settle {a.settle}s, {a.steps:g} steps/s, hold {a.hold}s")
+           f"{W}x{H}, {fr} fps, card {cw}x{ch} settles at y {y_end}, push at {a.at}s ({a.push}s), settle {a.settle}s, {a.steps:g} steps/s, hold {a.hold}s", fr)
 
 
 if __name__ == "__main__":

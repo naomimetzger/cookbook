@@ -29,15 +29,16 @@ Works on Mac, Windows and Linux. Before the first run, check what's needed:
 `python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow faster-whisper`
 - On Windows, type `python` instead of `python3` in every command.
 - If something is missing, it prints the right install command for that computer. Ask the user before installing anything; Python packages install with `--install`.
-- Speech-to-text runs offline with faster-whisper. If no model is on the computer yet, the script stops and says so. Ask the user, then rerun with `--allow-download` (one-time, about 150 MB).
+- Speech-to-text runs offline with faster-whisper. It checks the language first and prints it: English uses an English model, other languages the multilingual one. If it can't tell, it stops: ask the user which language, then add `--language es` (or fr, pt…).
+- If a model is missing, the script stops and names it and its size (e.g. 'base', about 145 MB). Ask the user, then rerun with `--allow-download`.
 
 ## Steps
 1. Ask for the video, plus a font reference if they have one. Everything else has defaults.
 2. Check free disk space (`python3 -c "import shutil;print(shutil.disk_usage('.').free//2**30,'GB free')"`). If less than 2 GB is free, stop and tell them.
-3. Make a still first. It's fast and needs no permission, and it also transcribes that moment:
-   `python3 <skill-dir>/scripts/bigwords.py INPUT bigwords_still_v1.png --still 2 [--font impact]`
-   Show it, plus the "Screens:" list it prints. Check the words are right.
-4. **Fixing words:** the timings are saved as `OUTPUT.words.json`. Correct any spelling there (keep the times) and rerun with `--words that-file.json`.
+3. Make a still first. It needs no permission, and it transcribes the whole part being made (add the same `--start`/`--length` you'll render):
+   `python3 <skill-dir>/scripts/bigwords.py INPUT bigwords_still_v1.png --still 2 [--font impact] [--hint "bet on yourself"]`
+   Show it, plus the "Words heard:" line. Ask the user to check every word before any render: big words make a mishearing obvious.
+4. **Fixing words:** if names or phrases come out wrong, rerun the still with `--hint "the right words"`. Or correct the spelling in `OUTPUT.words.json` (keep the times) and render with `--words that-file.json`. A words file only works for the seconds it covers; the script stops if it's too short.
 5. Ask before any video render. When they say yes, make a short rough cut: `--rough --length 5`.
 6. Do the full render only after they approve the rough cut.
 7. Never overwrite a file. Each new version gets the next number (v2, v3…). Every output comes with a `.settings.txt` holding the screens and the exact command.

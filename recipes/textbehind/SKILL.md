@@ -14,7 +14,7 @@ A bold title tucked behind the head looks designed, not slapped on. Use it on on
   - `--style caps` (default): bold capitals. Behind lines in `--behind-colour pink`, front lines in `--front-colour white`. Colours can be any hex code, e.g. `#FFE14A`.
   - `--style lowercase`: white lowercase stacked above the head, e.g. `--front "11 titles" "? years" "sponsored"`.
 - **Font:** `--font path/to/font.ttf` (a characterful display font works best). Without it, a bold system font is used.
-- **Size/position:** `--scale 0.9` makes the text smaller, `--shift -0.03` moves the behind lines up, and `--point X Y` picks the person when there's more than one.
+- **Size/position:** the behind lines sit just behind the top of the head (found from the cut-out), and long lines shrink to fit. `--scale 0.9` makes the text smaller, `--shift -0.03` moves the behind lines up, and `--point X Y` picks the person when there's more than one.
 
 ## If started with no details (wizard)
 If the user just types `/textbehind` (or asks for it without details), don't guess. Run a short wizard:
@@ -25,9 +25,10 @@ If the user just types `/textbehind` (or asks for it without details), don't gue
 
 ## Setup (any computer)
 Works on Mac, Windows and Linux. Before the first run, check what's needed:
-`python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow`
+`python3 <skill-dir>/scripts/check_setup.py ffmpeg pillow cutout`
 - **Mac (macOS 14+):** the cut-out uses Apple's built-in subject lifting (free, offline). It builds itself on first run and needs the Xcode command line tools (`xcode-select --install`).
-- **Windows / Linux:** the cut-out uses rembg: `python3 <skill-dir>/scripts/check_setup.py --install rembg`. It downloads a small model once (about 170 MB).
+- **Windows / Linux:** the cut-out uses rembg (`rembg[cpu]`): `python3 <skill-dir>/scripts/check_setup.py --install rembg`. Its model downloads once (about 176 MB). The script stops and asks first; after a yes, add `--allow-download`.
+- Phone files are handled: HEIC photos, sideways phone photos and iPhone HDR video.
 - On Windows, type `python` instead of `python3`. Ask before installing anything.
 
 ## Steps

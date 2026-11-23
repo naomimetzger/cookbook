@@ -14,15 +14,30 @@ every 5, a ruler edge) in a chosen colour, with the user's clip or photo on top 
 
 Works on Mac, Windows and Linux. Needs ffmpeg and Pillow.
 """
-import json, os, re, shlex, subprocess, sys, tempfile, platform
+import json, os, re, shlex, shutil, subprocess, sys, platform
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from media import (load_image, prepare_video, safe_output, temp_dir, frame_rate, is_image,  # noqa: E402
+                   COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP)
+
+
+
+def fps_text(f):
+    """media.frame_rate() as ffmpeg wants it: exact fractions for the NTSC rates (23.976 -> 24000/1001)."""
+    return {23.976: "24000/1001", 29.97: "30000/1001", 59.94: "60000/1001"}.get(f, f"{f:g}")
 
 
 def even(n):
     n = int(round(n)); return n - (n % 2)
 
 
-def is_image(p):
-    return p.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".heic"))
+def ready(path, tmp):
+    """A photo becomes an upright PNG (HEIC and phone rotation handled); a video gets normal colour."""
+    if is_image(path):
+        out = os.path.join(tmp, "photo.png")
+        load_image(path).save(out)
+        return out
+    return prepare_video(path, tmp)
 
 
 def display_size(path):
@@ -97,18 +112,18 @@ def push_chain(W, H, push, dur, cx=0.5, cy=0.5):
             f"crop={2 * W}:{2 * H}:x='(iw-{2 * W})*{cx}':y='(ih-{2 * H})*{cy}',scale={W}:{H}")
 
 
-def finish(a, cmd, out, audio_from, length, info):
+def finish(a, cmd, out, audio_from, length, info, fps="30"):
     """Add audio + encoder (or still frame) options, run, write settings."""
     if a.still is not None:
         cmd += ["-frames:v", "1", out]
     else:
         if audio_from is not None:
-            cmd += ["-map", f"{audio_from}:a:0?", "-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-map", f"{audio_from}:{AUDIO_MAP}", "-c:a", "aac", "-b:a", "192k"]
         crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
-        cmd += ["-t", f"{length:.3f}", "-r", "30", "-c:v", "libx264", "-crf", crf, "-preset", preset,
-                "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out]
+        cmd += ["-t", f"{length:.3f}", "-r", fps, "-c:v", "libx264", "-crf", crf, "-preset", preset,
+                "-pix_fmt", "yuv420p", *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
@@ -145,7 +160,6 @@ def mat_image(W, H, colour, angle, ruler):
 
 def main():
     import argparse
-    from PIL import Image, ImageDraw, ImageFilter
     p = argparse.ArgumentParser()
     p.add_argument("media"); p.add_argument("output")
     p.add_argument("--mat", default="green"); p.add_argument("--size", type=float, default=0.62)
@@ -155,6 +169,19 @@ def main():
     p.add_argument("--dur", type=float, default=4.0); p.add_argument("--start", type=float, default=0)
     p.add_argument("--length", type=float); p.add_argument("--still", type=float); p.add_argument("--rough", action="store_true")
     a = p.parse_args()
+    safe_output(a.output)                       # never overwrite: refuse before doing any work
+    tmp = temp_dir("gridmat_")
+    try:
+        make(a, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def make(a, tmp):
+    from PIL import Image, ImageDraw, ImageFilter
+    a.media = ready(a.media, tmp)
+    fps = 30 if is_image(a.media) else frame_rate(a.media)   # keep the source frame rate (photos: 30)
+    rate = fps_text(fps)
     iw, ih = display_size(a.media)
     fr = a.frame if a.frame != "auto" else ("9:16" if ih > iw else "16:9")
     W, H = (1920, 1080) if fr == "16:9" else (1080, 1920)
@@ -173,21 +200,21 @@ def main():
         sh = sh.filter(ImageFilter.GaussianBlur(max(2, int(ch * 0.035))))
         dark = Image.new("RGBA", (W, H), (0, 0, 0, 255)); dark.putalpha(sh)
         page = Image.alpha_composite(page, dark)
-    tmp = tempfile.mkdtemp(prefix="gridmat_")
     pf = os.path.join(tmp, "mat.png"); page.save(pf)
     m = Image.new("L", (cw * 4, ch * 4), 0)
     ImageDraw.Draw(m).rounded_rectangle([0, 0, cw * 4 - 1, ch * 4 - 1], radius=r * 4, fill=255)
     mf = os.path.join(tmp, "mask.png"); m.resize((cw, ch), Image.LANCZOS).save(mf)
     seek = a.still if a.still is not None else a.start
     length = (a.length or max(0.1, duration(a.media) - seek)) if not is_image(a.media) else (a.length or a.dur)
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-i", pf]
+    cmd = ["ffmpeg", "-n", "-hide_banner", "-loglevel", "error", "-loop", "1", "-i", pf]
     cmd += source_args(a.media, 0 if is_image(a.media) else seek, length + 0.1)
     cmd += ["-loop", "1", "-i", mf]
-    lines = [f"[1:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},setsar=1,fps=30,format=rgba[v]",
-             f"[2:v]format=gray[m];[v][m]alphamerge[c];[0:v]fps=30,format=rgba[pg];[pg][c]overlay={x0}:{y0}:shortest=1,format=yuv420p[out]"]
+    lines = [f"[1:v:0]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},setsar=1,fps={rate},format=rgba[v]",
+             f"[2:v]format=gray[m];[v][m]alphamerge[c];[0:v]fps={rate},format=rgba[pg];[pg][c]overlay={x0}:{y0}:shortest=1:format=rgb,{RGB_TO_YUV}[out]"]
     cmd += ["-filter_complex", ";".join(lines), "-map", "[out]"]
     finish(a, cmd, a.output, 1 if has_audio(a.media) else None, length,
-           f"{W}x{H}, mat {a.mat}, card {cw}x{ch} at {x0},{y0}, radius {r}px, shadow {a.shadow}, angle {a.angle}, ruler {a.ruler}")
+           f"{W}x{H}, {rate} fps, mat {a.mat}, card {cw}x{ch} at {x0},{y0}, radius {r}px, shadow {a.shadow}, angle {a.angle}, ruler {a.ruler}",
+           rate)
 
 
 if __name__ == "__main__":

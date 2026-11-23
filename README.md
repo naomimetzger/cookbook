@@ -34,7 +34,9 @@ Works with Claude Code and ChatGPT Codex.
 
 Type a recipe name, like `/bigwords` (or "use the bigwords recipe"), and give it your video. It asks a few quick questions, shows you a still first, and only renders when you say yes. **Customise and tweak each recipe, then copy your prompt, at [naomimetzger.com/cookbook](https://naomimetzger.com/cookbook).**
 
-Works on Mac, Windows and Linux. You need Python 3 and ffmpeg. Each recipe checks what's missing and tells you how to get it.
+Tested on Mac. Windows and Linux are in beta: they should work, but tell me if something breaks. You need Python 3.11 or newer and ffmpeg. Each recipe checks what's missing and tells you how to get it, and asks before installing anything.
+
+iPhone files are handled for you: HEIC photos, sideways photos and HDR video are converted to normal colour first, and your originals are never changed. Every render is saved under a new name, so nothing is overwritten.
 
 Made by Naomi Metzger.
 

@@ -7,18 +7,23 @@ a documentary interview reel. No box, no animation. Portrait-first, works on wid
 
   --words-per 2   most words on screen at once (1-4)
   --pattern "4 1 1 4 2 3 4 2 2 3"  word counts per screen in turn (max 4), for rhythm
-  --y 0.55        where the words sit (0-1 down; about chest height on a seated speaker)
+  --y auto        where the words sit (0-1 down). auto: just below the face if one is found (Mac), else 0.65,
+                  chest height, inside Instagram's safe zone (14%-75% of the height)
   --size 0.021    capital height as a share of the frame height
   --font NAME     a font by name or file; default Satoshi (free from fontshare.com), else Inter (bundled)
   --weight ExtraBold (Bold, SemiBold)   --color white   --shadow 0.45 (0 = none)   --case upper|as-is
   --linger 0.2    a line stays this long after its last word, then clears (never into the next sentence)
   --cuts T T …    shot-change times: a line never carries across one
   --frame auto    auto, 9:16 or 16:9 (a wide video made 9:16 is cropped round --face X)   --face 0.5
+  --hint "bet on yourself"   words or names you expect, so they're heard right
+  --language es   spoken language (default: detected; English uses an English model)
   --words fixed.json   --allow-download   --start --length --still SECONDS --rough
 
 Works on Mac, Windows and Linux. Needs ffmpeg, Pillow and faster-whisper. Inter is bundled.
 """
-import json, os, re, shlex, subprocess, sys, tempfile, platform
+import json, os, re, shlex, shutil, subprocess, sys, platform
+from media import safe_output, temp_dir, prepare_video, frame_rate, probe, video_stream, COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP
+from speech import Speech
 
 
 def even(n):
@@ -30,32 +35,30 @@ def is_image(p):
 
 
 def display_size(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                          "stream=width,height:stream_side_data=rotation", "-of", "json", path],
-                         capture_output=True, text=True, check=True).stdout
-    s = json.loads(out)["streams"][0]
+    s = video_stream(probe(path))
     w, h, rot = s["width"], s["height"], 0
     for d in s.get("side_data_list", []):
         if "rotation" in d:
-            rot = int(d["rotation"] or 0)
+            rot = int(float(d["rotation"] or 0))
     return (h, w) if abs(rot) % 180 == 90 else (w, h)
 
 
 def duration(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
-                          path], capture_output=True, text=True).stdout.strip()
     try:
-        return float(out)
-    except ValueError:
+        return float(probe(path)["format"]["duration"])
+    except (KeyError, ValueError):
         return 0.0
 
 
 def has_audio(path):
     if is_image(path):
         return False
-    return bool(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
-                                "stream=index", "-of", "csv=p=0", path],
-                               capture_output=True, text=True).stdout.strip())
+    return any(s.get("codec_type") == "audio" for s in probe(path).get("streams", []))
+
+
+def concat_path(p):
+    """A path for an ffmpeg concat list: quotes inside it are escaped, so O'Brien's folders work."""
+    return "'" + p.replace("\\", "/").replace("'", "'\\''") + "'"
 
 
 def colour(c):
@@ -106,37 +109,25 @@ def finish(a, cmd, out, audio_from, length, info):
     if a.still is not None:
         cmd += ["-frames:v", "1", out]
     else:
-        if audio_from is not None:
-            cmd += ["-map", f"{audio_from}:a:0?", "-c:a", "aac", "-b:a", "192k"]
+        if audio_from is not None:   # first audio track only
+            cmd += ["-map", f"{audio_from}:{AUDIO_MAP}", "-c:a", "aac", "-b:a", "192k"]
         crf, preset = ("28", "veryfast") if a.rough else ("18", "medium")
-        cmd += ["-t", f"{length:.3f}", "-r", "30", "-c:v", "libx264", "-crf", crf, "-preset", preset,
-                "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out]
+        cmd += ["-t", f"{length:.3f}", "-r", f"{a.fps:g}", "-c:v", "libx264", "-crf", crf, "-preset", preset,
+                "-pix_fmt", "yuv420p", *COLOR_TAGS, "-threads", "2", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
-    with open(out + ".settings.txt", "w") as f:
+    with open(out + ".settings.txt", "w", encoding="utf-8") as f:
         f.write(info + "\n" + " ".join(shlex.quote(c) for c in cmd) + "\n")
     print(f"Done: {out} ({info})")
 
 # ---------- speech timing (free, offline) ----------
-def transcribe(path, start, length, tmp, allow_download=False):
-    """Word timings (seconds on the original clock) with the local faster-whisper model."""
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        raise SystemExit("Speech-to-text isn't installed. Ask the user, then run: "
-                         f"{sys.executable} -m pip install faster-whisper")
+def transcribe(path, start, length, tmp, allow_download=False, language=None, hint=None):
+    """Word timings (seconds on the original clock) with the local faster-whisper model, in the right language."""
+    if not has_audio(path):
+        raise SystemExit("This video has no sound, so there are no words to time. Give a words file with --words.")
     wav = os.path.join(tmp, "a.wav")
     cmd = ["ffmpeg", "-v", "error", "-y", "-ss", str(start)] + (["-t", str(length)] if length else [])
-    subprocess.run(cmd + ["-i", path, "-ac", "1", "-ar", "16000", wav], check=True)
-    model = None
-    for name in ("base.en", "base", "tiny.en"):
-        try:
-            model = WhisperModel(name, device="cpu", compute_type="int8", local_files_only=not allow_download)
-            break
-        except Exception:
-            continue
-    if model is None:
-        raise SystemExit("No speech model on this computer yet. Ask the user, then rerun with "
-                         "--allow-download (downloads the 'base.en' model once, about 150 MB).")
+    subprocess.run(cmd + ["-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "16000", wav], check=True)
+    sp = Speech(wav, language, hint, allow_download)
     # Word times from one pass can be off by half a second on short words after a pause. Listen three
     # slightly different ways (plain, with a short silence in front, with voice detection) and, for each
     # word, take the middle of the three times. One-off mistakes get outvoted.
@@ -144,8 +135,7 @@ def transcribe(path, start, length, tmp, allow_download=False):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-t", str(lead), "-i", "anullsrc=r=16000:cl=mono",
                     "-i", wav, "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1", padded], check=True)
     def run(f, vad, shift):
-        segs, _ = model.transcribe(f, word_timestamps=True, vad_filter=vad)
-        return [{"word": w.word.strip(), "start": w.start - shift, "end": w.end - shift} for s in segs for w in (s.words or [])]
+        return [dict(w, start=w["start"] - shift, end=w["end"] - shift) for w in sp.words(f, vad)]
     passes = [run(wav, False, 0), run(padded, False, lead), run(wav, True, 0)]
     words = passes[0]
     key = lambda ws: [re.sub(r"[^\w']", "", w["word"].lower()) for w in ws]
@@ -217,14 +207,110 @@ def find_word(words, target, after=0.0):
     return None
 
 
-def get_words(a, video, start, length, tmp):
-    """Use a saved words file if given, else transcribe and save one next to the output for fixing."""
-    import json
-    if getattr(a, "words", None):
-        return json.load(open(a.words))
-    words = transcribe(video, start, length, tmp, getattr(a, "allow_download", False))
-    json.dump(words, open(os.path.splitext(a.output)[0] + ".words.json", "w"), indent=1)
+def load_words(path, start, end):
+    """A saved words file. It must cover the part being made (a file made for one moment can't caption more)."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    words = data["words"] if isinstance(data, dict) else data
+    if isinstance(data, dict) and "span" in data:
+        s0, s1 = data["span"]
+    elif words:   # an older file with no record of what it covers: judge by its words
+        s0, s1 = words[0]["start"] - 1.5, words[-1]["end"] + 2.5
+    else:
+        s0 = s1 = 0
+    if start < s0 - 0.05 or end > s1 + 0.05:
+        raise SystemExit(f"{path} only covers {max(0, s0):.1f}-{s1:.1f} s, but this needs {start:.1f}-{end:.1f} s, "
+                         "so words would be missing. Make the still again, fix the words in its new .words.json, "
+                         "or leave out --words.")
     return words
+
+
+def get_words(a, video, start, length, tmp):
+    """Use a saved words file if given, else transcribe the whole part and save it next to the output for fixing."""
+    if getattr(a, "words", None):
+        return load_words(a.words, start, start + length)
+    words = transcribe(video, start, length, tmp, getattr(a, "allow_download", False),
+                       getattr(a, "language", None), getattr(a, "hint", None))
+    cache = os.path.splitext(a.output)[0] + ".words.json"
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump({"span": [round(start, 3), round(start + length, 3)], "hint": getattr(a, "hint", None),
+                   "words": words}, f, indent=1, ensure_ascii=False)
+    print("Words heard: " + " ".join(w["word"] for w in words))
+    print(f"Check every word before rendering. Fix any in {cache} (keep the times) and rerun with --words, "
+          'or rerun with --hint "the right words".')
+    return words
+
+
+# ---------- where the words sit: below the face, inside Instagram's safe zone ----------
+FACE_BIN = os.path.join(HERE, "bin", "face")
+
+
+def mac_faces(frames):
+    """[(top, bottom)] per frame with the Mac's Vision, or None if it isn't available."""
+    if platform.system() != "Darwin":
+        return None
+    if not os.path.exists(FACE_BIN):
+        if not shutil.which("xcrun"):
+            return None
+        os.makedirs(os.path.dirname(FACE_BIN), exist_ok=True)   # built once (needs Apple's free Command Line Tools)
+        subprocess.run(["xcrun", "swiftc", "-O", os.path.join(HERE, "face.swift"), "-o", FACE_BIN], capture_output=True)
+        if not os.path.exists(FACE_BIN):
+            return None
+    r = subprocess.run([FACE_BIN] + frames, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        return None
+    return [tuple(map(float, ln.split())) for ln in r.stdout.split("\n") if len(ln.split()) == 2]
+
+
+def cv2_faces(frames):
+    """[(top, bottom)] per frame with OpenCV's face finder, if this computer has it."""
+    try:
+        import cv2
+        casc = cv2.CascadeClassifier(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
+        if casc.empty():
+            return None
+    except Exception:
+        return None
+    out = []
+    for f in frames:
+        g = cv2.imread(f, cv2.IMREAD_GRAYSCALE)
+        found = casc.detectMultiScale(g, 1.1, 5, minSize=(g.shape[1] // 12, g.shape[1] // 12)) if g is not None else []
+        if len(found):
+            x, y, w, h = max(found, key=lambda b: b[2] * b[3])
+            out.append((y / g.shape[0], (y + h) / g.shape[0]))
+    return out
+
+
+def auto_y(video, seek, length, W, H, crop, tmp, default=0.65):
+    """Chest height just below the face (lowest chin in 5 frames + a gap), kept between 0.60 and 0.72 so it
+    stays in Instagram's safe zone. 0.65 if no face finder or no face."""
+    if is_image(video):
+        times = [0]
+    else:
+        times = [seek + length * (i + 0.5) / 5 for i in range(5)]
+    frames = []
+    for i, t in enumerate(times):
+        f = os.path.join(tmp, f"face{i}.jpg")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}", "-i", video, "-frames:v", "1", "-vf",
+                        f"scale={W}:{H}:force_original_aspect_ratio=increase,{crop},scale=360:-2", f], capture_output=True)
+        if os.path.exists(f):
+            frames.append(f)
+    boxes, how = mac_faces(frames), "Mac face finder"
+    if boxes is None:
+        boxes, how = cv2_faces(frames), "OpenCV face finder"
+    if not boxes:
+        why = "no face found" if boxes is not None else "no face finder on this computer"
+        print(f"Words at y {default} (chest height; {why}).")
+        return default
+    top, chin = min(t for t, _ in boxes), max(b for _, b in boxes)
+    if chin + 0.06 <= 0.72:      # room below the face: chest height
+        y = round(max(0.60, chin + 0.06), 3); where = "below the chin"
+    elif top - 0.05 >= 0.2:      # the face fills the bottom of the frame: sit just above the head instead
+        y = round(min(0.72, top - 0.05), 3); where = "above the head (no room below the face)"
+    else:
+        y = 0.72; where = "as low as the safe zone allows; the face fills the frame, so check the still"
+    print(f"Face found ({how}) at {max(0, top):.0%}-{min(1, chin):.0%} of the height: words at y {y}, {where}.")
+    return y
 
 
 # ---------- phrase captions: static, measured, placed in one fixed spot ----------
@@ -276,7 +362,7 @@ def caption_track(a, video, phrases, render, W, H, seek, length, out, info, ling
     """Each phrase shows from its first word until the next phrase (or linger after its last word).
     Pictures are joined into one timed track and laid over the video in one go."""
     from PIL import Image
-    tmp = tempfile.mkdtemp(prefix="captions_")
+    tmp = getattr(a, "tmp", None) or temp_dir("captions_")
     blank = os.path.join(tmp, "blank.png"); Image.new("RGBA", (W, H), (0, 0, 0, 0)).save(blank)
     seq, t = [], seek
     for i, ph in enumerate(phrases):
@@ -298,10 +384,10 @@ def caption_track(a, video, phrases, render, W, H, seek, length, out, info, ling
     if t < seek + length:
         seq.append((blank, seek + length - t))
     lst = os.path.join(tmp, "list.txt")
-    with open(lst, "w") as f:
+    with open(lst, "w", encoding="utf-8") as f:
         for p_, d in seq:
-            f.write(f"file '{p_}'\nduration {d:.3f}\n")
-        f.write(f"file '{seq[-1][0]}'\n")
+            f.write(f"file {concat_path(p_)}\nduration {d:.3f}\n")
+        f.write(f"file {concat_path(seq[-1][0])}\n")
     if a.still is not None:
         hit, acc = blank, seek
         for p_, d in seq:
@@ -309,13 +395,14 @@ def caption_track(a, video, phrases, render, W, H, seek, length, out, info, ling
                 hit = p_; break
             acc += d
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{a.still:.3f}", "-i", video, "-i", hit,
-               "-filter_complex", f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,{crop},setsar=1,eq=brightness={-dim:.3f}[v];[v][1:v]overlay=0:0[out]",
+               "-filter_complex", f"[0:v:0]scale={W}:{H}:force_original_aspect_ratio=increase,{crop},setsar=1,eq=brightness={-dim:.3f}[v];[v][1:v]overlay=0:0[out]",
                "-map", "[out]"]
         finish(a, cmd, out, None, 0, info); return
+    to_yuv = RGB_TO_YUV.replace("yuv420p", "yuva420p")   # caption pictures: Rec.709 maths, see-through kept
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{seek:.3f}", "-t", f"{length:.3f}", "-i", video,
            "-f", "concat", "-safe", "0", "-i", lst,
-           "-filter_complex", f"[0:v]fps=30,scale={W}:{H}:force_original_aspect_ratio=increase,{crop},setsar=1,eq=brightness={-dim:.3f},format=yuv420p[v];"
-                              f"[1:v]fps=30,format=rgba[c];[v][c]overlay=0:0:format=auto:shortest=1,format=yuv420p[out]", "-map", "[out]"]
+           "-filter_complex", f"[0:v:0]fps={a.fps:g},scale={W}:{H}:force_original_aspect_ratio=increase,{crop},setsar=1,eq=brightness={-dim:.3f},format=yuv420p[v];"
+                              f"[1:v]fps={a.fps:g},format=rgba,{to_yuv}[c];[v][c]overlay=0:0:format=auto:shortest=1,format=yuv420p[out]", "-map", "[out]"]
     finish(a, cmd, out, 0 if has_audio(video) else None, length, info)
 
 
@@ -466,7 +553,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("video"); p.add_argument("output")
     p.add_argument("--words-per", type=int, default=2, choices=[1, 2, 3, 4])
-    p.add_argument("--pattern", help='word counts per screen, in turn, e.g. "4 1 1 4 2 3 4 2 2 3" (max 4); repeats'); p.add_argument("--y", type=float, default=0.55)
+    p.add_argument("--pattern", help='word counts per screen, in turn, e.g. "4 1 1 4 2 3 4 2 2 3" (max 4); repeats'); p.add_argument("--y", default="auto", help="0-1 down, or auto (below the face, else 0.65)")
     p.add_argument("--size", type=float, default=0.021); p.add_argument("--weight", default="ExtraBold")
     p.add_argument("--font", default="Satoshi", help='a font by name ("Satoshi", "Chubbo", "Tanker") or a font file; default Inter (bundled)')
     p.add_argument("--color", default="white"); p.add_argument("--shadow", type=float, default=0.45)
@@ -475,9 +562,23 @@ def main():
     p.add_argument("--linger", type=float, default=0.2, help="seconds a line stays after its last word when there is a pause")
     p.add_argument("--cuts", type=float, nargs="*", default=[], help="shot-change times: a line never carries across one")
     p.add_argument("--words"); p.add_argument("--allow-download", action="store_true")
+    p.add_argument("--hint", help='words or names you expect, e.g. "bet on yourself" (helps the speech model hear them)')
+    p.add_argument("--language", help="spoken language code, e.g. en, es (default: detected)")
     p.add_argument("--start", type=float, default=0); p.add_argument("--length", type=float)
     p.add_argument("--still", type=float); p.add_argument("--rough", action="store_true")
     a = p.parse_args()
+    safe_output(a.output)
+    a.tmp = temp_dir("midcaptions_")
+    try:
+        run(a)
+    finally:
+        shutil.rmtree(a.tmp, ignore_errors=True)
+
+
+def run(a):
+    tmp = a.tmp
+    a.video = prepare_video(a.video, tmp)   # iPhone HDR -> normal colour; the original is never changed
+    a.fps = frame_rate(a.video)            # keep the source frame rate (24 stays 24)
     iw, ih = display_size(a.video)
     if a.frame == "auto":
         a.frame = "16:9" if iw >= ih else "9:16"
@@ -485,7 +586,6 @@ def main():
     if a.rough:
         W, H = W // 2, H // 2
     length = a.length or max(0.1, duration(a.video) - a.start)
-    tmp = tempfile.mkdtemp(prefix="midcaptions_")
     words = [w for w in get_words(a, a.video, a.start, length, tmp) if w["word"].strip()]
     # 1-2 words per screen: a new screen after a sentence end, a comma, or a pause
     pattern = [max(1, min(4, int(n))) for n in a.pattern.split()] if a.pattern else None
@@ -514,11 +614,18 @@ def main():
     f0 = load(200); hb = f0.getbbox("H")
     font = load(int(200 * a.size * H / (hb[3] - hb[1])))
     casef = (lambda t: t.upper()) if a.case == "upper" else (lambda t: t.lower()) if a.case == "lower" else (lambda t: t)
+    crop = f"crop={W}:{H}:(iw-{W})*{a.face}:(ih-{H})/2"
+    a.y = auto_y(a.video, a.start, length, W, H, crop, tmp) if str(a.y).lower() == "auto" else float(a.y)
+    if not 0.14 <= a.y <= 0.75 and a.frame == "9:16":
+        print(f"Note: y {a.y} is outside Instagram's safe zone (0.14-0.75), so the app's buttons and caption may cover it.")
+    wide = [ph["lines"][0] for ph in phrases if font.getlength(casef(ph["lines"][0])) > W * 0.7]
+    if wide and a.frame == "9:16":
+        print("Note: these lines run under Instagram's right-hand buttons; use fewer words per screen: " + " | ".join(wide))
     render = lambda lines: draw_lines(W, H, [casef(l) for l in lines], font, a.color, cy=a.y, gap=0.45, shadow=a.shadow)
     print("Screens: " + " | ".join(ph["lines"][0] for ph in phrases))
-    crop = f"crop={W}:{H}:(iw-{W})*{a.face}:(ih-{H})/2"
     caption_track(a, a.video, phrases, render, W, H, a.start, length, a.output,
-                  f"{W}x{H}, {len(phrases)} screens, {a.words_per} words max, y {a.y}, size {a.size}, Inter {a.weight}",
+                  f"{W}x{H}, {len(phrases)} screens, {a.words_per} words max, y {a.y}, size {a.size}, "
+                  f"{os.path.basename(a.font) if a.font else 'Inter'} {a.weight}, {a.fps:g} fps",
                   linger=a.linger, bridge=0.25, crop=crop)
 
 

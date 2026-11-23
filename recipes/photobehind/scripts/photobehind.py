@@ -9,13 +9,17 @@ last with a hard cut. The Mac cuts the person out so the photo sits behind the h
 Photo times are seconds from --from. The last photo stays until --end (seconds from --from) or the
 clip end. Writes OUT.mp4 (just that piece, with its sound), OUT.cues.json (camera hits for /sfxhits)
 and OUT.settings.txt.
+Photos only (phone photos, HEIC and sideways JPEGs are fine). iPhone HDR video and any frame rate are
+handled (media.py), and only the first video and audio track are used.
 """
-import argparse, json, os, shutil, subprocess, sys, tempfile
+import argparse, json, os, shutil, subprocess, sys
 
 from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cutout import make_masks  # noqa: E402
+from media import (COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP, frame_rate, is_image, load_image,  # noqa: E402
+                   prepare_video, safe_output, temp_dir)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Measured from finished reels (9:16): card height 27% of the frame, top at 20%,
@@ -36,7 +40,7 @@ def head_centre_x(mask):
 
 
 def card(photo_path, W, H, scale):
-    ph = Image.open(photo_path).convert("RGB")
+    ph = load_image(photo_path)  # upright, HEIC ok
     h = int(CARD_H * H * scale)
     w = int(ph.width * h / ph.height)
     if w > CARD_MAXW * W * scale:  # wide photo: limit the width, crop the sides
@@ -63,27 +67,42 @@ def main():
     ap.add_argument("--top", type=float, default=CARD_TOP, help="card top as a fraction of height")
     ap.add_argument("--point", nargs=2, type=float, default=[0.5, 0.4], help="a point on the person, 0-1")
     ap.add_argument("--rough", action="store_true", help="half size, quick")
+    ap.add_argument("--allow-download", action="store_true",
+                    help="let rembg download its one-time cut-out model (about 176 MB). Ask first.")
     a = ap.parse_args()
-    if os.path.exists(a.output):
-        raise SystemExit(f"{a.output} exists. Never overwrite: use the next version number.")
+    safe_output(a.output)
+    if not os.path.exists(a.input):
+        raise SystemExit(f"Video not found: {a.input}")
     photos = []
     for p in a.photo:
         path, _, t = p.rpartition("@")
+        try:
+            t = float(t)
+        except ValueError:
+            raise SystemExit(f"--photo {p}: give PATH@SECONDS, e.g. title1.png@0.40")
         if not os.path.exists(path):
             raise SystemExit(f"Photo not found: {path}")
-        photos.append((path, float(t)))
+        if not is_image(path):
+            raise SystemExit(f"{os.path.basename(path)} isn't a photo. This recipe takes photos only; "
+                             "use a still from the clip (e.g. ffmpeg -ss 2 -i clip.mp4 -frames:v 1 still.png).")
+        photos.append((path, t))
     photos.sort(key=lambda x: x[1])
     dur = a.end_clip - a.start
     end = a.end if a.end is not None else dur
-    tmp = tempfile.mkdtemp(prefix="photobehind_")
+    tmp = temp_dir("photobehind_")
     try:
         frames, masks, out = (os.path.join(tmp, d) for d in "fmo")
         for d in (frames, masks, out):
             os.makedirs(d)
+        src = prepare_video(a.input, tmp)  # iPhone HDR -> normal colour; the original is never changed
+        fps = frame_rate(src)
         W = 540 if a.rough else 1080
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(a.start), "-to", str(a.end_clip), "-i", a.input,
-                        "-vf", f"scale={W}:-2,fps=30", os.path.join(frames, "%05d.png")], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(a.start), "-to", str(a.end_clip), "-i", src,
+                        "-map", "0:v:0", "-vf", f"scale={W}:-2,fps={fps}", os.path.join(frames, "%05d.png")],
+                       check=True)
         names = sorted(os.listdir(frames))
+        if not names:
+            raise SystemExit(f"No frames between {a.start} and {a.end_clip} s. Check the times.")
         first = Image.open(os.path.join(frames, names[0]))
         W, H = first.size
         cards = [card(p, W, H, a.scale) for p, _ in photos]
@@ -91,13 +110,13 @@ def main():
         lit = os.path.join(tmp, "lit")
         os.makedirs(lit)
         for i, n in enumerate(names):
-            t = i / 30.0
+            t = i / fps
             if photos[0][1] <= t < end:
                 os.link(os.path.join(frames, n), os.path.join(lit, n))
-        make_masks(lit, masks, a.point)
+        make_masks(lit, masks, a.point, a.allow_download)
         cx = None
         for i, n in enumerate(names):
-            t = i / 30.0
+            t = i / fps
             fr = Image.open(os.path.join(frames, n)).convert("RGB")
             idx = max([k for k, (_, pt) in enumerate(photos) if pt <= t], default=None)
             mp = os.path.join(masks, os.path.splitext(n)[0] + ".png")
@@ -115,14 +134,15 @@ def main():
                 fr = o.convert("RGB")
             fr.save(os.path.join(out, n))
             os.remove(os.path.join(frames, n))
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "30", "-i", os.path.join(out, "%05d.png"),
-                        "-ss", str(a.start), "-to", str(a.end_clip), "-i", a.input, "-map", "0:v", "-map", "1:a?",
-                        "-c:v", "libx264", "-crf", "23" if a.rough else "17", "-pix_fmt", "yuv420p", "-threads", "2",
-                        "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart", a.output], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(fps), "-i", os.path.join(out, "%05d.png"),
+                        "-ss", str(a.start), "-to", str(a.end_clip), "-i", src, "-map", "0:v:0", "-map", f"1:{AUDIO_MAP}",
+                        "-vf", RGB_TO_YUV, "-c:v", "libx264", "-crf", "23" if a.rough else "17", *COLOR_TAGS,
+                        "-threads", "2", "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart",
+                        a.output], check=True)
         base = os.path.splitext(a.output)[0]
-        with open(base + ".cues.json", "w") as f:
+        with open(base + ".cues.json", "w", encoding="utf-8") as f:
             json.dump([{"type": "camera", "t": round(t, 3)} for _, t in photos], f, indent=1)
-        with open(base + ".settings.txt", "w") as f:
+        with open(base + ".settings.txt", "w", encoding="utf-8") as f:
             f.write(" ".join(sys.argv) + "\n")
         print("wrote", a.output, "and", base + ".cues.json")
     finally:
