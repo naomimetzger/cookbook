@@ -22,6 +22,7 @@ a documentary interview reel. No box, no animation. Portrait-first, works on wid
 Works on Mac, Windows and Linux. Needs ffmpeg, Pillow and faster-whisper. Inter is bundled.
 """
 import json, os, re, shlex, shutil, subprocess, sys, platform
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # find media.py/speech.py even in isolated mode
 from media import safe_output, temp_dir, prepare_video, frame_rate, probe, video_stream, COLOR_TAGS, RGB_TO_YUV, AUDIO_MAP
 from speech import Speech
 
