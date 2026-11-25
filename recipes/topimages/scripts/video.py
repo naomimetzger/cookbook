@@ -333,7 +333,10 @@ def find_font(kind, override=None):
                 return p
     for p in FALLBACK[kind]:
         if os.path.isfile(p):
-            print(f"Note: {FONTS[kind][0]} isn't on this computer, using {os.path.basename(p)}. Pass --font to change it.")
+            if FONTS[kind]:
+                print(f"Note: {FONTS[kind][0]} isn't on this computer, using {os.path.basename(p)}. Pass --font to change it.")
+            else:
+                print(f"Using {os.path.basename(p)}. For more character pass --font with your own display font.")
             return p
     raise SystemExit("No font found. Pass --font PATH.")
 
